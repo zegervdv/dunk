@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 import functools
 import os
 import sys
@@ -28,22 +29,7 @@ from dunk.renderables import (
     OnlyRenamedFileBody,
 )
 
-MONOKAI_LIGHT_ACCENT = Color.from_rgb(62, 64, 54).triplet.hex
-MONOKAI_BACKGROUND = Color.from_rgb(red=39, green=40, blue=34)
-DUNK_BG_HEX = "#0d0f0b"
-MONOKAI_BG_HEX = MONOKAI_BACKGROUND.triplet.hex
-
 T = TypeVar("T")
-
-theme = Theme(
-    {
-        "hatched": f"{MONOKAI_BG_HEX} on {DUNK_BG_HEX}",
-        "renamed": f"cyan",
-        "border": MONOKAI_LIGHT_ACCENT,
-    }
-)
-force_width, _ = os.get_terminal_size(2)
-console = Console(force_terminal=True, width=force_width, theme=theme)
 
 
 def find_git_root() -> Path:
@@ -65,6 +51,16 @@ class ContiguousStreak(NamedTuple):
     streak_row_start: int
     streak_length: int
 
+class DunkTheme(NamedTuple):
+    syntax: str = "monokai"
+    background: Color = Color.parse("#0d0f0b")
+    header: Color = Color.from_rgb(red=39, green=40, blue=34)
+    border: Color = Color.from_rgb(62, 64, 54)
+    text: Color = Color.from_rgb(255, 255, 255)
+
+    @property
+    def hunk_header_style(self) -> str:
+        return f"{self.header.triplet.hex} on {self.background.triplet.hex}"
 
 def loop_first(values: Iterable[T]) -> Iterable[Tuple[bool, T]]:
     """Iterate and generate a tuple with a flag for first value."""
@@ -85,6 +81,21 @@ def main():
 
     project_root: Path = find_git_root()
 
+    theme = DunkTheme(syntax="pastie", background=Color.parse("#fbfafc"), header=Color.parse("#a1a1a1"), text=Color.from_rgb(0, 0, 0))
+
+    console_theme = Theme(
+        {
+            "hatched": f"{theme.header.triplet.hex} on {theme.background.triplet.hex}",
+            "renamed": f"cyan",
+            "border": theme.border.triplet.hex,
+        }
+    )
+    force_width, _ = os.get_terminal_size(2)
+    console = Console(force_terminal=True, width=force_width, theme=console_theme)
+
+    return process_patches(patch_set, project_root, console, theme=theme)
+
+def process_patches(patch_set: PatchSet, project_root: Path, console: Console, theme: DunkTheme):
     console.print(
         PatchSetHeader(
             file_modifications=len(patch_set.modified_files),
@@ -162,6 +173,7 @@ def main():
                 line_range=source_line_range,
                 line_numbers=True,
                 indent_guides=True,
+                theme=theme.syntax
             )
             target_syntax = Syntax(
                 target_code,
@@ -169,6 +181,7 @@ def main():
                 line_range=target_line_range,
                 line_numbers=True,
                 indent_guides=True,
+                theme=theme.syntax
             )
             source_removed_linenos = set()
             target_added_linenos = set()
@@ -362,6 +375,8 @@ def main():
                 source_lineno_to_padding,
                 dict(row_number_to_deletion_ranges),
                 gutter_size=len(str(source_lineno_max)) + 2,
+                console=console,
+                theme=theme,
             )
             highlighted_target_lines = highlight_and_align_lines_in_hunk(
                 hunk.target_start,
@@ -371,23 +386,24 @@ def main():
                 target_lineno_to_padding,
                 dict(row_number_to_insertion_ranges),
                 gutter_size=len(str(len(target_lines) + 1)) + 2,
+                console=console,
+                theme=theme,
             )
 
             table = Table.grid()
-            table.add_column(style="on #0d0f0b")
-            table.add_column(style="on #0d0f0b")
+            table.add_column(style=f"on {theme.background.triplet.hex}")
+            table.add_column(style=f"on {theme.background.triplet.hex}")
             table.add_row(
                 SegmentLines(highlighted_source_lines, new_lines=True),
                 SegmentLines(highlighted_target_lines, new_lines=True),
             )
 
-            hunk_header_style = f"{MONOKAI_BACKGROUND.triplet.hex} on #0d0f0b"
             hunk_header = (
-                f"[on #0d0f0b dim]@@ [red]-{hunk.source_start},{hunk.source_length}[/] "
+                f"[on {theme.background.triplet.hex} dim]@@ [red]-{hunk.source_start},{hunk.source_length}[/] "
                 f"[green]+{hunk.target_start},{hunk.target_length}[/] "
-                f"[dim]@@ {hunk.section_header or ''}[/]"
+                f"@@ [dim]{hunk.section_header or ''}[/]"
             )
-            console.rule(hunk_header, characters="╲", style=hunk_header_style)
+            console.rule(hunk_header, characters="╲", style=theme.hunk_header_style)
             console.print(table)
 
         # TODO: File name indicator at bottom of file, if diff is larger than terminal height.
@@ -409,6 +425,8 @@ def highlight_and_align_lines_in_hunk(
     lines_to_pad_above: Dict[int, int],
     highlight_ranges: Dict[int, Tuple[int, int]],
     gutter_size: int,
+    console: Console,
+    theme: DunkTheme,
 ):
     highlighted_lines = []
 
@@ -439,7 +457,7 @@ def highlight_and_align_lines_in_hunk(
                             blend_rgb_cached(
                                 blend_colour, style.color.triplet, cross_fade=0.5
                             ),
-                            ColorTriplet(255, 255, 255),
+                            theme.text.triplet,
                             cross_fade=0.4,
                         )
                         new_color = Color.from_triplet(new_triplet)
@@ -463,7 +481,7 @@ def highlight_and_align_lines_in_hunk(
             highlighted_lines.append(
                 [
                     Segment(
-                        "╲" * console.width, Style.from_color(color=MONOKAI_BACKGROUND)
+                        "╲" * console.width, style=Style(bgcolor=theme.background, color=theme.header)
                     )
                 ]
             )
@@ -475,13 +493,13 @@ def highlight_and_align_lines_in_hunk(
             )
             intraline_bgcolor = Color.from_triplet(
                 blend_rgb_cached(
-                    blend_colour, MONOKAI_BACKGROUND.triplet, cross_fade=0.6
+                    blend_colour, theme.background.triplet, cross_fade=0.6
                 )
             )
             intraline_color = Color.from_triplet(
                 blend_rgb_cached(
                     intraline_bgcolor.triplet,
-                    Color.from_rgb(255, 255, 255).triplet,
+                    theme.text.triplet,
                     cross_fade=0.8,
                 )
             )
