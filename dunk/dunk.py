@@ -32,13 +32,18 @@ from dunk.renderables import (
 T = TypeVar("T")
 
 
-def find_git_root() -> Path:
+def find_vcs_root() -> Path:
     cwd = Path.cwd()
     if (cwd / ".git").exists():
         return Path.cwd()
 
+    if (cwd / ".hg").exists():
+        return Path.cwd()
+
     for directory in cwd.parents:
         if (directory / ".git").exists():
+            return directory
+        if (directory / ".hg").exists():
             return directory
 
     return cwd
@@ -79,7 +84,7 @@ def main():
     diff = "".join(input)
     patch_set: PatchSet = PatchSet(diff)
 
-    project_root: Path = find_git_root()
+    project_root: Path = find_vcs_root()
 
     theme = DunkTheme(syntax="pastie", background=Color.parse("#fbfafc"), header=Color.parse("#a1a1a1"), text=Color.from_rgb(0, 0, 0))
 
